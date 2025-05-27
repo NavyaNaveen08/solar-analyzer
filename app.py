@@ -1,78 +1,30 @@
 import streamlit as st
-import base64
-from openai import OpenAI
+from transformers import BlipProcessor, BlipForConditionalGeneration
+from PIL import Image
+import torch
 
-# Initialize OpenAI client with your API key from Streamlit secrets
-client = OpenAI(api_key=st.secrets["api_key"])
+st.set_page_config(layout="wide", page_title="Image Captioning App")
 
-st.title("☀️ Solar Rooftop Analysis Tool")
-st.write("Upload a satellite image of a rooftop to get solar panel recommendations and ROI.")
+@st.cache_resource
+def load_model():
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    return processor, model
 
-uploaded_file = st.file_uploader("Upload Satellite Image", type=["jpg", "jpeg", "png"])
+processor, model = load_model()
 
-def analyze_image(image_b64: str):
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "You are a solar expert. Analyze this rooftop image and respond in JSON format like:\n"
-                        "{'usable_area_m2': ..., 'shaded_area_m2': ..., 'recommended_panels': ..., "
-                        "'installation_recommended': 'Yes/No', 'comments': '...'}"
-                    ),
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/jpeg;base64," + image_b64
-                    },
-                },
-            ],
-        }
-    ]
+st.title("🖼️ AI-Powered Image Captioning (Free & Offline)")
+st.markdown("Upload an image, and the model will describe it!")
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        max_tokens=500,
-    )
-
-    return response.choices[0].message.content
-
-def estimate_roi(panels, cost_per_panel=20000, yearly_savings=1500):
-    total_cost = panels * cost_per_panel
-    savings = panels * yearly_savings
-    payback = total_cost / savings if savings > 0 else 0
-    return total_cost, savings, round(payback, 1)
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
-    img_bytes = uploaded_file.read()
-    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
-    st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
-    st.write("Analyzing...")
-
-    try:
-        result_text = analyze_image(img_b64)
-        st.code(result_text)
-
-        # Safely parse JSON response string to dictionary
-        import json
-
-        # Replace single quotes with double quotes if needed for JSON parsing
-        json_text = result_text.replace("'", '"')
-
-        result = json.loads(json_text)
-
-        st.json(result)
-
-        cost, savings, payback = estimate_roi(result['recommended_panels'])
-
-        st.markdown(f"### 💰 ROI Estimates")
-        st.markdown(f"- **Cost**: ₹{cost}")
-        st.markdown(f"- **Annual Savings**: ₹{savings}")
-        st.markdown(f"- **Payback Time**: {payback} years")
-    except Exception as e:
-        st.error(f"Something went wrong: {e}")
+    with st.spinner("Generating caption..."):
+        inputs = processor(images=image, return_tensors="pt")
+        out = model.generate(**inputs)
+        caption = processor.decode(out[0], skip_special_tokens=True)
+        st.success("✅ Caption Generated!")
+        st.markdown(f"**Caption:** {caption}")
